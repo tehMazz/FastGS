@@ -1,0 +1,62 @@
+#!/bin/bash
+#SBATCH --job-name=fastgs_tnt
+#SBATCH --account=IscrC_EditGS
+#SBATCH --partition=boost_usr_prod
+#SBATCH --qos=normal
+#SBATCH --time=10:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:1
+#SBATCH --mem=64G
+#SBATCH --output=logs/fastgs_tnt_%x_%j.out
+#SBATCH --error=logs/fastgs_tnt_%x_%j.err
+
+# Usage:
+#   sbatch -J fastgs_tnt_g<SCENES_ID> slurm/run_tnt <SCENES_ID>
+# where <SCENES_ID> is 0 or 1 (predefined 2-way split: 3 scenes / 3).
+# Submit both in parallel:
+#   for g in 0 1; do sbatch -J fastgs_tnt_g$g slurm/run_tnt $g; done
+
+set -euo pipefail
+
+SCENES_ID="${1:-}"
+if [[ -z "$SCENES_ID" ]]; then
+    echo "ERROR: missing SCENES_ID positional argument (expected 0 or 1)." >&2
+    echo "Usage: sbatch $0 <SCENES_ID>" >&2
+    exit 1
+fi
+if ! [[ "$SCENES_ID" =~ ^[01]$ ]]; then
+    echo "ERROR: SCENES_ID must be 0 or 1 (got '$SCENES_ID')." >&2
+    exit 1
+fi
+
+# --- Modules (must match what was used to build the FastGS CUDA extensions) ---
+module purge
+module load profile/deeplrn
+module load cuda/12.2
+module load gcc/12.2.0
+
+# --- Python env (uv venv) ---
+source /leonardo_scratch/fast/IscrC_EditGS/envs/fastgs++/bin/activate
+
+# --- Env ---
+export TORCH_CUDA_ARCH_LIST="8.0"   # A100
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+# --- Paths ---
+DATA_DIR=/leonardo_work/IscrC_EditGS/datasets/tnt
+OUTPUT_DIR=/leonardo_work/IscrC_EditGS/repos/FastGS/output/tnt
+
+mkdir -p logs "$OUTPUT_DIR"
+
+cd /leonardo_work/IscrC_EditGS/repos/FastGS
+
+echo "[INFO] Running scene group $SCENES_ID on SLURM job $SLURM_JOB_ID"
+
+# --gpu_device 0 because SLURM gives us GPU 0 inside the job
+srun python scripts/benchmark_tnt_fastgs.py \
+    --data_dir "$DATA_DIR" \
+    --output_dir "$OUTPUT_DIR" \
+    --gpu_device 0 \
+    --scenes_id "$SCENES_ID"

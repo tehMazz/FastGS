@@ -1,0 +1,17 @@
+#!/bin/bash
+#!/bin/bash
+# Usage: ./debug_alloc.sh [hours] — default 8h
+
+HOURS=${1:-8}
+ACCOUNT="IscrC_EditGS"
+
+echo "Requesting 1 GPU for ${HOURS}h..."
+
+salloc --account=$ACCOUNT \
+       --partition=boost_usr_prod \
+       --time=${HOURS}:00:00 \
+       --nodes=1 \
+       --ntasks-per-node=1 \
+       --cpus-per-task=8 \
+       --gres=gpu:1 \
+       --mem=120G
