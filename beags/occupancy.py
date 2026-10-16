@@ -67,9 +67,10 @@ class LabeledVoxels:
         return hit.any(dim=1)
 
 
-def occupancy_loss(gaussians, gaussian_labels, voxels, samples_per_gaussian=20, limit=3.0):
-    """mean(opacity * G(x) * [x outside same-label voxels]) over samples of object Gaussians."""
-    obj = gaussian_labels != 0
+def occupancy_loss(gaussians, gaussian_labels, voxels, samples_per_gaussian=20, limit=3.0, include_background=False):
+    """mean(opacity * G(x) * [x outside same-label voxels]) over samples of object Gaussians
+    (all Gaussians with include_background; the voxels must then hold label-0 points too)."""
+    obj = torch.ones_like(gaussian_labels, dtype=torch.bool) if include_background else gaussian_labels != 0
     if not obj.any():
         return gaussians.get_xyz.sum() * 0
     mu = gaussians.get_xyz[obj]

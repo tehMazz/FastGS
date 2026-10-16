@@ -31,13 +31,16 @@ def label_coverage(cam, gaussians, pipe, mult, labels, label, extracted=False):
 
 
 @torch.no_grad()
-def labeled_point_cloud(gaussians, cameras, pipe, mult, labels, threshold=0.5):
-    """Back-project every pixel where an object label (>0) covers >= threshold. Returns (xyz, label)."""
+def labeled_point_cloud(gaussians, cameras, pipe, mult, labels, threshold=0.5, label_ids=None):
+    """Back-project every pixel where a label covers >= threshold. Returns (xyz, label).
+    label_ids: labels to back-project; default all object labels (1..max), i.e. no background."""
+    if label_ids is None:
+        label_ids = range(1, int(labels.max()) + 1)
     xyz, lab = [], []
     for cam in cameras:
         depth, _ = render_depth_alpha(cam, gaussians, pipe, mult)
         world = backproject(depth, cam)
-        for label in range(1, int(labels.max()) + 1):
+        for label in label_ids:
             hit = (label_coverage(cam, gaussians, pipe, mult, labels, label) >= threshold) & (depth > 0)
             xyz.append(world[hit])
             lab.append(torch.full((int(hit.sum()),), label, dtype=torch.int32, device="cuda"))

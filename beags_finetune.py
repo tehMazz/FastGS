@@ -15,6 +15,7 @@ from fused_ssim import fused_ssim
 from tqdm import tqdm
 
 from beags.common import beags_path, labels_path, load_model, parse_args
+from beags.labels import labeled_point_cloud
 from beags.masks import attach_masks
 from beags.occupancy import LabeledVoxels, occupancy_loss, voxel_size
 from gaussian_renderer import render_fastgs
@@ -28,17 +29,24 @@ def add_args(parser):
     parser.add_argument("--lambda_occ", type=float, default=10.0)
     parser.add_argument("--samples_per_gaussian", type=int, default=20)
     parser.add_argument("--voxel_vicinity", type=float, default=4.30)
+    parser.add_argument("--occ_background", action="store_true",
+                        help="occupancy loss also on background Gaussians (label 0); adds background points to the voxels")
     parser.add_argument("--dilation_weight", type=float, default=1.0)
     parser.add_argument("--prune_opacity", type=float, default=0.05)
     parser.add_argument("--prune_interval", type=int, default=100)
 
 
-def load_voxels(model_path, vicinity):
+def load_voxels(model_path, vicinity, background_xyz=None):
+    """Object voxels from beags_prepare; the voxel size always comes from the object points."""
     data = np.load(beags_path(model_path, "labeled_points.npz"))
-    xyz = torch.from_numpy(data["xyz"]).cuda()
+    xyz, labels = torch.from_numpy(data["xyz"]).cuda(), torch.from_numpy(data["labels"]).cuda()
     size = voxel_size(xyz) * vicinity
     print(f"[beags] voxel size {size:.5f} from {xyz.shape[0]} labelled points")
-    return LabeledVoxels.build(xyz, torch.from_numpy(data["labels"]).cuda(), size)
+    if background_xyz is not None:
+        print(f"[beags] + {background_xyz.shape[0]} background points")
+        xyz = torch.cat([xyz, background_xyz])
+        labels = torch.cat([labels, torch.zeros(background_xyz.shape[0], dtype=labels.dtype, device="cuda")])
+    return LabeledVoxels.build(xyz, labels, size)
 
 
 def finetune(dataset, pipe, opt, args):
@@ -47,7 +55,10 @@ def finetune(dataset, pipe, opt, args):
     gaussians.max_radii2D = torch.zeros(gaussians.get_xyz.shape[0], device="cuda")  # load_ply leaves it empty
     cameras = scene.getTrainCameras()
     num_labels = attach_masks(cameras, args.masks or beags_path(dataset.model_path, "masks"), args.dilation_weight)
-    voxels = load_voxels(dataset.model_path, args.voxel_vicinity)
+    background_xyz = None
+    if args.occ_background:  # background cloud from the loaded (pre-finetune) model, as for the objects
+        background_xyz, _ = labeled_point_cloud(gaussians, cameras, pipe, opt.mult, gaussians.labels, label_ids=[0])
+    voxels = load_voxels(dataset.model_path, args.voxel_vicinity, background_xyz)
     bg = torch.tensor([1, 1, 1] if dataset.white_background else [0, 0, 0], dtype=torch.float32, device="cuda")
     optimizers = [gaussians.optimizer, gaussians.shoptimizer]
 
@@ -66,7 +77,8 @@ def finetune(dataset, pipe, opt, args):
         photo = (1 - opt.lambda_dssim) * l1_loss(out["render"], gt) + \
             opt.lambda_dssim * (1 - fused_ssim(out["render"][None], gt[None]))
         sag = (out["sag"] * cam.masks.boundary).mean()
-        occ = occupancy_loss(gaussians, gaussians.labels, voxels, args.samples_per_gaussian)
+        occ = occupancy_loss(gaussians, gaussians.labels, voxels, args.samples_per_gaussian,
+                             include_background=args.occ_background)
         (photo + args.lambda_sag * sag + args.lambda_occ * occ).backward()
 
         with torch.no_grad():
