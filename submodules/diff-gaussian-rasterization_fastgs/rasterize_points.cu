@@ -49,7 +49,7 @@ std::function<float*(size_t N)> resizeFloatFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -73,7 +73,10 @@ RasterizeGaussiansCUDA(
     const float mult,
 	const bool prefiltered,
 	const bool debug,
-	const bool get_flag)
+	const bool get_flag,
+	const torch::Tensor& gaussian_labels,
+	const torch::Tensor& pixel_labels,
+	const int num_labels)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
@@ -108,6 +111,24 @@ RasterizeGaussiansCUDA(
   {
 	metricCount = torch::full({P}, 0, int_opts);
 	accum_metric_counts_ptr = metricCount.contiguous().data<int>();
+  }
+
+  // BEA-GS labels: empty gaussian_labels = stock FastGS
+  LabelArgs labels;
+  torch::Tensor sag = torch::empty({0}, float_opts);
+  torch::Tensor votes = torch::empty({0}, float_opts);
+  if (gaussian_labels.numel() != 0)
+  {
+	TORCH_CHECK(gaussian_labels.dtype() == torch::kInt32 && pixel_labels.dtype() == torch::kInt32, "labels must be int32");
+	TORCH_CHECK(gaussian_labels.numel() == P && pixel_labels.numel() == H * W, "labels have wrong size");
+	TORCH_CHECK(num_labels > 0, "num_labels must be > 0");
+	sag = torch::zeros({1, H, W}, float_opts);
+	votes = torch::zeros({P, num_labels}, float_opts);
+	labels.gaussian_labels = gaussian_labels.data_ptr<int>();
+	labels.pixel_labels = pixel_labels.data_ptr<int>();
+	labels.L = num_labels;
+	labels.sag = sag.data_ptr<float>();
+	labels.votes = votes.data_ptr<float>();
   }
   
   int rendered = 0;
@@ -149,12 +170,13 @@ RasterizeGaussiansCUDA(
 		radii.contiguous().data<int>(),
 		debug,
 		get_flag,
-		accum_metric_counts_ptr);
+		accum_metric_counts_ptr,
+		labels);
 
 		rendered = std::get<0>(tup);
 		num_buckets = std::get<1>(tup);
   }
-  return std::make_tuple(rendered, num_buckets, out_color, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer, metricCount);
+  return std::make_tuple(rendered, num_buckets, out_color, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer, metricCount, sag, votes);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
@@ -182,7 +204,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const torch::Tensor& imageBuffer,
 	const int B,
 	const torch::Tensor& sampleBuffer,
-	const bool debug) 
+	const bool debug,
+	const torch::Tensor& gaussian_labels,
+	const torch::Tensor& pixel_labels,
+	const torch::Tensor& sag,
+	const torch::Tensor& dL_dsag)
 {
   const int P = means3D.size(0);
   const int H = dL_dout_color.size(1);
@@ -205,6 +231,15 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   torch::Tensor dL_dscales = torch::zeros({P, 3}, means3D.options());
   torch::Tensor dL_drotations = torch::zeros({P, 4}, means3D.options());
   
+  LabelArgs labels;
+  if (gaussian_labels.numel() != 0)
+  {
+	labels.gaussian_labels = gaussian_labels.data_ptr<int>();
+	labels.pixel_labels = pixel_labels.data_ptr<int>();
+	labels.sag = const_cast<float*>(sag.data_ptr<float>());
+	labels.dL_dsag = dL_dsag.data_ptr<float>();
+  }
+
   if(P != 0)
   {  
 	  CudaRasterizer::Rasterizer::backward(P, degree, M, R, B,
@@ -239,7 +274,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  dL_dsh.contiguous().data<float>(),
 	  dL_dscales.contiguous().data<float>(),
 	  dL_drotations.contiguous().data<float>(),
-	  debug);
+	  debug,
+	  labels);
   }
 
   return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_ddc, dL_dsh, dL_dscales, dL_drotations);

@@ -82,7 +82,8 @@ namespace CudaRasterizer
 		uint32_t *bucket_to_tile;
 		float *T;
 		float *ar;
-		static SampleState fromChunk(char*& chunk, size_t C);
+		float *sag;  // BEA-GS SAG value at bucket starts (only with labels)
+		static SampleState fromChunk(char*& chunk, size_t C, bool with_sag = false);
 	};
 
 	template<typename T> 

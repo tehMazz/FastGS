@@ -244,11 +244,14 @@ CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, s
 	return img;
 }
 
-CudaRasterizer::SampleState CudaRasterizer::SampleState::fromChunk(char *& chunk, size_t C) {
+CudaRasterizer::SampleState CudaRasterizer::SampleState::fromChunk(char *& chunk, size_t C, bool with_sag) {
 	SampleState sample;
 	obtain(chunk, sample.bucket_to_tile, C * BLOCK_SIZE, 128);
 	obtain(chunk, sample.T, C * BLOCK_SIZE, 128);
 	obtain(chunk, sample.ar, NUM_CHAFFELS * C * BLOCK_SIZE, 128);
+	sample.sag = nullptr;
+	if (with_sag)
+		obtain(chunk, sample.sag, C * BLOCK_SIZE, 128);
 	return sample;
 }
 
@@ -317,7 +320,8 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 	int* radii,
 	bool debug,
 	bool get_flag,
-	int* metricCount)
+	int* metricCount,
+	const LabelArgs& labels)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -428,9 +432,12 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 	unsigned int bucket_sum;
 	CHECK_CUDA(cudaMemcpy(&bucket_sum, imgState.bucket_offsets + num_tiles - 1, sizeof(unsigned int), cudaMemcpyDeviceToHost), debug);
 	// create a state to store. size is number is the total number of buckets * block_size
-	size_t sample_chunk_size = required<SampleState>(bucket_sum);
+	const bool with_sag = labels.gaussian_labels != nullptr;
+	char* sample_size = nullptr;
+	SampleState::fromChunk(sample_size, bucket_sum, with_sag);
+	size_t sample_chunk_size = ((size_t)sample_size) + 128;
 	char* sample_chunkptr = sampleBuffer(sample_chunk_size);
-	SampleState sampleState = SampleState::fromChunk(sample_chunkptr, bucket_sum);
+	SampleState sampleState = SampleState::fromChunk(sample_chunkptr, bucket_sum, with_sag);
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
@@ -455,7 +462,9 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 		radii,
 		metric_map,
 		get_flag,
-		metricCount), debug)
+		metricCount,
+		sampleState.sag,
+		labels), debug)
 
 	return std::make_tuple(num_rendered, bucket_sum);
 }
@@ -494,12 +503,13 @@ void CudaRasterizer::Rasterizer::backward(
 	float* dL_dsh,
 	float* dL_dscale,
 	float* dL_drot,
-	bool debug)
+	bool debug,
+	const LabelArgs& labels)
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
 	BinningState binningState = BinningState::fromChunk(binning_buffer, R);
 	ImageState imgState = ImageState::fromChunk(img_buffer, width * height);
-	SampleState sampleState = SampleState::fromChunk(sample_buffer, B);
+	SampleState sampleState = SampleState::fromChunk(sample_buffer, B, labels.gaussian_labels != nullptr);
 
 	if (radii == nullptr)
 	{
@@ -538,7 +548,9 @@ void CudaRasterizer::Rasterizer::backward(
 		(float4*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
-		dL_dcolor), debug)
+		dL_dcolor,
+		sampleState.sag,
+		labels), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,

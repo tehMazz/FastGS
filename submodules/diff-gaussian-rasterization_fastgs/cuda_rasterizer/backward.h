@@ -17,6 +17,7 @@
 #include "device_launch_parameters.h"
 #define GLM_FORCE_CUDA
 #include <glm/glm.hpp>
+#include "labels.h"
 
 namespace BACKWARD
 {
@@ -40,7 +41,9 @@ namespace BACKWARD
 		float4* dL_dmean2D,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
-		float* dL_dcolors);
+		float* dL_dcolors,
+		const float* sampled_sag,
+		const LabelArgs& labels);
 
 	void preprocess(
 		int P, int D, int M,

@@ -15,7 +15,7 @@
 #include <tuple>
 #include <string>
 	
-std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -39,7 +39,10 @@ RasterizeGaussiansCUDA(
     const float mult,
 	const bool prefiltered,
 	const bool debug,
-	const bool get_flag);
+	const bool get_flag,
+	const torch::Tensor& gaussian_labels,
+	const torch::Tensor& pixel_labels,
+	const int num_labels);
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
  RasterizeGaussiansBackwardCUDA(
@@ -66,7 +69,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const torch::Tensor& imageBuffer,
 	const int B,
 	const torch::Tensor& sampleBuffer,
-	const bool debug);
+	const bool debug,
+	const torch::Tensor& gaussian_labels,
+	const torch::Tensor& pixel_labels,
+	const torch::Tensor& sag,
+	const torch::Tensor& dL_dsag);
 		
 torch::Tensor markVisible(
 		torch::Tensor& means3D,

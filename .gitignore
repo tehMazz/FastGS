@@ -10,3 +10,4 @@ __pycache__/
 .vscode
 tmp/
 FastGS-main-changes.patch
+logs/

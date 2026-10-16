@@ -290,7 +290,9 @@ renderCUDA(
 	int* __restrict__ radii,
 	const int* __restrict__ metric_map,
 	bool get_flag,
-	int* __restrict__ metricCount)
+	int* __restrict__ metricCount,
+	float* __restrict__ sampled_sag,
+	const LabelArgs lab)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -328,6 +330,10 @@ renderCUDA(
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
 	// __shared__ float collected_radius2[BLOCK_SIZE];
+	__shared__ int collected_label[BLOCK_SIZE];
+	const bool use_labels = lab.gaussian_labels != nullptr;
+	const int pixel_label = (use_labels && inside) ? lab.pixel_labels[pix_id] : -1;
+	float S = 0.0f;  // BEA-GS semantic-aware (SAG) accumulator
 
 	// Initialize helper variables
 	float T = 1.0f;
@@ -352,6 +358,8 @@ renderCUDA(
 			collected_id[block.thread_rank()] = coll_id;
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+			if (use_labels)
+				collected_label[block.thread_rank()] = lab.gaussian_labels[coll_id];
 			// collected_radius2[block.thread_rank()] = radii[coll_id] * radii[coll_id];
 		}
 		block.sync();
@@ -365,6 +373,8 @@ renderCUDA(
 				for (int ch = 0; ch < CHANNELS; ++ch) {
 					sampled_ar[(bbm * BLOCK_SIZE * CHANNELS) + ch * BLOCK_SIZE + block.thread_rank()] = C[ch];
 				}
+				if (use_labels)
+					sampled_sag[bbm * BLOCK_SIZE + block.thread_rank()] = S;
 				++bbm;
 			}
 
@@ -405,6 +415,14 @@ renderCUDA(
 		            atomicAdd(&(metricCount[collected_id[j]]), 1);
 	            }
 			}
+
+			if (pixel_label >= 0)
+			{
+				const float w = alpha * T;
+				atomicAdd(&lab.votes[collected_id[j] * lab.L + pixel_label], w);
+				if (collected_label[j] != pixel_label)
+					S += w;
+			}
             
 			T = test_T;
 
@@ -426,6 +444,8 @@ renderCUDA(
 			pixel_colors[ch * H * W + pix_id] = C[ch];
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 		}
+		if (use_labels)
+			lab.sag[pix_id] = S;
 	}
 
 	// max reduce the last contributor
@@ -459,7 +479,9 @@ void FORWARD::render(
 	int* radii,
 	const int* metric_map,
 	bool get_flag,
-	int* metricCount)
+	int* metricCount,
+	float* sampled_sag,
+	const LabelArgs& labels)
 {
 	renderCUDA<NUM_CHAFFELS> << <grid, block >> > (
 		ranges,
@@ -479,7 +501,9 @@ void FORWARD::render(
 		radii,
 		metric_map,
 		get_flag,
-		metricCount
+		metricCount,
+		sampled_sag,
+		labels
 		);
 }
 

@@ -64,6 +64,15 @@ class _RasterizeGaussians(torch.autograd.Function):
         if get_flag == None:
             get_flag = False
 
+        # BEA-GS labels (empty = stock FastGS)
+        gaussian_labels = raster_settings.gaussian_labels
+        pixel_labels = raster_settings.pixel_labels
+        if gaussian_labels is None:
+            gaussian_labels = torch.empty(0, dtype=torch.int32, device=means3D.device)
+            pixel_labels = gaussian_labels
+        gaussian_labels = gaussian_labels.int().contiguous()
+        pixel_labels = pixel_labels.reshape(-1).int().contiguous()
+
         args = (
             raster_settings.bg, 
             means3D,
@@ -87,36 +96,43 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.mult,
             raster_settings.prefiltered,
             raster_settings.debug,
-            get_flag
+            get_flag,
+            gaussian_labels,
+            pixel_labels,
+            raster_settings.num_labels,
         )
 
         # Invoke C++/CUDA rasterizer
         if raster_settings.debug:
             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
             try:
-                num_rendered, num_buckets, color, radii, geomBuffer, binningBuffer, imgBuffer = _C.rasterize_gaussians(*args)
+                num_rendered, num_buckets, color, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer, accum_metric_counts, sag, votes = _C.rasterize_gaussians(*args)
             except Exception as ex:
                 torch.save(cpu_args, "snapshot_fw.dump")
                 print("\nAn error occured in forward. Please forward snapshot_fw.dump for debugging.")
                 raise ex
         else:
-            num_rendered, num_buckets, color, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer, accum_metric_counts = _C.rasterize_gaussians(*args)
+            num_rendered, num_buckets, color, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer, accum_metric_counts, sag, votes = _C.rasterize_gaussians(*args)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.num_buckets = num_buckets
-        ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, dc, sh, geomBuffer, binningBuffer, imgBuffer, sampleBuffer)
-        return color, radii, accum_metric_counts
+        ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, dc, sh, geomBuffer, binningBuffer, imgBuffer, sampleBuffer,
+                              gaussian_labels, pixel_labels, sag)
+        ctx.mark_non_differentiable(votes)
+        return color, radii, accum_metric_counts, sag, votes
 
     @staticmethod
-    def backward(ctx, grad_out_color, _, g_metric):
+    def backward(ctx, grad_out_color, _, g_metric, grad_sag, _votes):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered
         num_buckets = ctx.num_buckets
         raster_settings = ctx.raster_settings
-        colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, dc, sh, geomBuffer, binningBuffer, imgBuffer, sampleBuffer = ctx.saved_tensors
+        colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, dc, sh, geomBuffer, binningBuffer, imgBuffer, sampleBuffer, \
+            gaussian_labels, pixel_labels, sag = ctx.saved_tensors
+        grad_sag = torch.zeros_like(sag) if grad_sag is None else grad_sag.contiguous()
 
         # Restructure args as C++ method expects them
         args = (raster_settings.bg,
@@ -142,7 +158,11 @@ class _RasterizeGaussians(torch.autograd.Function):
                 imgBuffer,
                 num_buckets,
                 sampleBuffer,
-                raster_settings.debug)
+                raster_settings.debug,
+                gaussian_labels,
+                pixel_labels,
+                sag,
+                grad_sag)
 
         # Compute gradients for relevant tensors by invoking backward method
         if raster_settings.debug:
@@ -187,6 +207,9 @@ class GaussianRasterizationSettings(NamedTuple):
     debug : bool
     get_flag : bool
     metric_map : torch.Tensor
+    gaussian_labels : torch.Tensor = None  # [P] int32, BEA-GS label per Gaussian
+    pixel_labels : torch.Tensor = None     # [H, W] int32, -1 = unlabeled
+    num_labels : int = 0
 
 class GaussianRasterizer(nn.Module):
     def __init__(self, raster_settings):

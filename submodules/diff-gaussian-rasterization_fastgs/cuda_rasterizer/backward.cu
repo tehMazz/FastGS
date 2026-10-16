@@ -420,7 +420,9 @@ PerGaussianRenderCUDA(
 	float4* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
-	float* __restrict__ dL_dcolors
+	float* __restrict__ dL_dcolors,
+	const float* __restrict__ sampled_sag,
+	const LabelArgs lab
 ) {
 	// global_bucket_idx = warp_idx
 	auto block = cg::this_thread_block();
@@ -463,6 +465,12 @@ PerGaussianRenderCUDA(
 		for (int ch = 0; ch < C; ++ch)
 			c[ch] = colors[gaussian_idx * C + ch];
 	}
+	// BEA-GS SAG state (only alive when labels are given)
+	const bool use_labels = lab.gaussian_labels != nullptr;
+	const int gaussian_label = (use_labels && valid_splat) ? lab.gaussian_labels[gaussian_idx] : -1;
+	int pixel_label = -1;
+	float ar_sag = 0.0f;
+	float dL_dsag = 0.0f;
 
 	// Gradient accumulation variables
 	float Register_dL_dmean2D_x = 0.0f;
@@ -522,6 +530,11 @@ PerGaussianRenderCUDA(
 			ar[ch] = my_warp.shfl_up(ar[ch], 1);
 			dL_dpixel[ch] = my_warp.shfl_up(dL_dpixel[ch], 1);
 		}
+		if (use_labels) {
+			pixel_label = my_warp.shfl_up(pixel_label, 1);
+			ar_sag = my_warp.shfl_up(ar_sag, 1);
+			dL_dsag = my_warp.shfl_up(dL_dsag, 1);
+		}
 
 		// which pixel index should this thread deal with?
 		int idx = i - my_warp.thread_rank();
@@ -541,6 +554,11 @@ PerGaussianRenderCUDA(
 			last_contributor = n_contrib[pix_id];
 			for (int ch = 0; ch < C; ++ch) {
 				dL_dpixel[ch] = dL_dpixels[ch * H * W + pix_id];
+			}
+			if (use_labels) {
+				pixel_label = lab.pixel_labels[pix_id];
+				ar_sag = sampled_sag[global_bucket_idx * BLOCK_SIZE + idx] - lab.sag[pix_id];
+				dL_dsag = lab.dL_dsag[pix_id];
 			}
 		}
 
@@ -573,6 +591,12 @@ PerGaussianRenderCUDA(
 				bg_dot_dpixel += bg_color[ch] * dL_dpixel[ch];
 			}
 			dL_dalpha += (-T_final * one_minus_alpha_reci) * bg_dot_dpixel;
+			// SAG: like a 4th channel with c = 1 for mismatched Gaussians, 0 otherwise.
+			// As in BEA-GS, only mismatched Gaussians receive the alpha gradient.
+			if (pixel_label >= 0 && gaussian_label != pixel_label) {
+				ar_sag += dchannel_dcolor;
+				dL_dalpha += (T + one_minus_alpha_reci * ar_sag) * dL_dsag;
+			}
 			T *= (1.0f - alpha);
 
 
@@ -872,7 +896,9 @@ void BACKWARD::render(
 	float4* dL_dmean2D,
 	float4* dL_dconic2D,
 	float* dL_dopacity,
-	float* dL_dcolors)
+	float* dL_dcolors,
+	const float* sampled_sag,
+	const LabelArgs& labels)
 {
 	const int THREADS = 32;
 	PerGaussianRenderCUDA<NUM_CHAFFELS> <<<((B*32) + THREADS - 1) / THREADS,THREADS>>>(
@@ -894,6 +920,8 @@ void BACKWARD::render(
 		dL_dmean2D,
 		dL_dconic2D,
 		dL_dopacity,
-		dL_dcolors
+		dL_dcolors,
+		sampled_sag,
+		labels
 		);
 }

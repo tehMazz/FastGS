@@ -14,6 +14,7 @@
 
 #include <vector>
 #include <functional>
+#include "labels.h"
 
 namespace CudaRasterizer
 {
@@ -56,7 +57,8 @@ namespace CudaRasterizer
 			int* radii = nullptr,
 			bool debug = false,
 			bool get_flag = false,
-			int* metricCount = nullptr);
+			int* metricCount = nullptr,
+			const LabelArgs& labels = LabelArgs());
 
 		static void backward(
 			const int P, int D, int M, int R, int B,
@@ -90,7 +92,8 @@ namespace CudaRasterizer
 			float* dL_dsh,
 			float* dL_dscale,
 			float* dL_drot,
-			bool debug);
+			bool debug,
+			const LabelArgs& labels = LabelArgs());
 	};
 };
 

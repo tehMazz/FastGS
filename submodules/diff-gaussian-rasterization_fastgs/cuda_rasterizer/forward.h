@@ -18,6 +18,7 @@
 #define GLM_FORCE_CUDA
 #include <glm/glm.hpp>
 #include <functional>
+#include "labels.h"
 
 namespace FORWARD
 {
@@ -73,7 +74,9 @@ namespace FORWARD
 		int* radii,
 		const int* metric_map,
 		bool get_flag,
-		int* metricCount);
+		int* metricCount,
+		float* sampled_sag,
+		const LabelArgs& labels);
 }
 
 
