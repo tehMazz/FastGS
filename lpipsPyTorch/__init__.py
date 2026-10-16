@@ -2,6 +2,7 @@ import torch
 
 from .modules.lpips import LPIPS
 
+criterion = None
 
 def lpips(x: torch.Tensor,
           y: torch.Tensor,
@@ -16,6 +17,10 @@ def lpips(x: torch.Tensor,
                         'alex' | 'squeeze' | 'vgg'. Default: 'alex'.
         version (str): the version of LPIPS. Default: 0.1.
     """
+    global criterion
     device = x.device
-    criterion = LPIPS(net_type, version).to(device)
+    if criterion is None:
+        criterion = LPIPS(net_type, version).to(device)
     return criterion(x, y)
+
+

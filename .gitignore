@@ -1,0 +1,12 @@
+output/
+logs/
+*.log
+lpipsPyTorch/weights
+*.pth
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+.vscode
+tmp/
+FastGS-main-changes.patch
