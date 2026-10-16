@@ -64,6 +64,8 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.empty(0)
         self.xyz_gradient_accum_abs = torch.empty(0)
         self.denom = torch.empty(0)
+        self.tmp_radii = None
+        self.labels = None  # BEA-GS: int32 [P] object label per Gaussian (0 = background), not optimized
         self.optimizer = None
         self.shoptimizer = None
         self.percent_dense = 0
@@ -379,6 +381,8 @@ class GaussianModel:
         self.max_radii2D = self.max_radii2D[valid_points_mask]
         if self.tmp_radii is not None:
             self.tmp_radii = self.tmp_radii[valid_points_mask]
+        if self.labels is not None:
+            self.labels = self.labels[valid_points_mask]
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -407,6 +411,7 @@ class GaussianModel:
         return optimizable_tensors
 
     def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_tmp_radii):
+        assert self.labels is None, "densification with BEA-GS labels is not supported"
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,

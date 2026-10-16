@@ -11,3 +11,4 @@ __pycache__/
 tmp/
 FastGS-main-changes.patch
 logs/
+data/
