@@ -22,7 +22,7 @@ from utils.loss_utils import l1_loss
 
 
 def add_args(parser):
-    parser.add_argument("--masks", default=None, help="default: <model>/beags/masks (consensus masks)")
+    parser.add_argument("--masks", default="", help="default: <model>/beags/masks (consensus masks)")
     parser.add_argument("--ft_iterations", type=int, default=3000)
     parser.add_argument("--lambda_sag", type=float, default=0.5)
     parser.add_argument("--lambda_occ", type=float, default=10.0)

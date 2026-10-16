@@ -83,7 +83,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
 
-        if intr.model=="SIMPLE_PINHOLE":
+        if intr.model in ["SIMPLE_PINHOLE", "SIMPLE_RADIAL", "RADIAL"]:  # params: f, cx, cy[, k...]
             focal_length_x = intr.params[0]
             FovY = focal2fov(focal_length_x, height)
             FovX = focal2fov(focal_length_x, width)
@@ -92,7 +92,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
             focal_length_y = intr.params[1]
             FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
-        elif intr.model in ["OPENCV", "OPENCV_FISHEYE", "FULL_OPENCV", "SIMPLE_RADIAL"]:
+        elif intr.model in ["OPENCV", "OPENCV_FISHEYE", "FULL_OPENCV"]:
             print("Colmap camera model is {}. Assuming undistorted dataset, using focal lengths as-is.".format(intr.model))
             focal_length_x = intr.params[0]
             focal_length_y = intr.params[1]

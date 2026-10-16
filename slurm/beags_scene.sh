@@ -23,8 +23,8 @@ set -x
   $PY train.py -s "$SRC" -m "$OUT" --eval --densification_interval 500 --optimizer_type default \
       --test_iterations 30000 --save_iterations 30000 --checkpoint_iterations -1 "$@"
 $PY beags_prepare.py -m "$OUT" --iteration 30000 --masks "$MASKS"
-$PY beags_eval.py -m "$OUT" --iteration 30000 --gt_masks "$GT"          # labels before finetune
+$PY beags_eval.py -m "$OUT" --iteration 30000 --gt_masks "$GT" --masks "$MASKS"         # labels before finetune
 $PY beags_finetune.py -m "$OUT" --iteration 30000
-$PY beags_eval.py -m "$OUT" --iteration 33000 --gt_masks "$GT" --render
+$PY beags_eval.py -m "$OUT" --iteration 33000 --gt_masks "$GT" --masks "$MASKS" --render
 for it in 30000 33000; do $PY render.py -m "$OUT" --iteration $it --skip_train; done
 $PY metrics.py -m "$OUT"

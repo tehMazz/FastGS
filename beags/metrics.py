@@ -3,11 +3,16 @@
 IoU / BIoU:   label render (all Gaussians, coverage >= 0.5)  vs  gt_masks[c]
 EIoU / BEIoU: object rendered alone (coverage >= 0.1)          vs  gt_masks_extracted[c]
 Averaged over (view, object) pairs of views that have GT.
+GT object ids can be a permutation of the SAM2 ids (3D-OVS): see `match_gt_to_labels`.
 """
+import os
+
 import cv2
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from beags.labels import label_coverage
+from beags.masks import load_npy_mask
 
 
 def iou(a, b):
@@ -32,20 +37,40 @@ def boundary_iou(gt, pred, dilation_ratio=0.02):
     return 1.0 if union == 0 else inter / union
 
 
-def segmentation_metrics(cameras, gaussians, pipe, mult, labels, num_labels):
-    """Returns {"IoU", "BIoU", "EIoU", "BEIoU", "per_view": [...]}; skips views without GT."""
+def match_gt_to_labels(cameras, sam_dir):
+    """{gt channel: SAM2 label} from the SAM2 *input* masks of the GT views (prediction-independent),
+    by Hungarian matching on IoU summed over views. Identity when no GT view has a SAM2 mask."""
+    num_gt = max(c.gt.shape[0] for c in cameras)
+    score = None
+    for cam in cameras:
+        sam = load_npy_mask(os.path.join(sam_dir, f"{cam.image_name}.npy"), cam.image_height, cam.image_width)
+        if sam is None:
+            continue
+        sam = (sam > 0.5).numpy()
+        if score is None:
+            score = np.zeros((num_gt, sam.shape[0]))
+        for j in range(1, cam.gt.shape[0]):
+            for k in range(1, sam.shape[0]):
+                score[j, k] += iou(sam[k], cam.gt[j].numpy())
+    if score is None:
+        return {j: j for j in range(1, num_gt)}
+    rows, cols = linear_sum_assignment(-score[1:, 1:])
+    return {int(r) + 1: int(c) + 1 for r, c in zip(rows, cols)}
+
+
+def segmentation_metrics(cameras, gaussians, pipe, mult, labels, gt_to_label):
+    """Returns {"IoU", "BIoU", "EIoU", "BEIoU", "per_view": [...]} over views with GT."""
     rows = []
     for cam in cameras:
-        gt = getattr(cam, "gt", None)
-        if gt is None:
-            continue
-        gt_ext = getattr(cam, "gt_extracted", None)
-        for c in range(1, min(num_labels, gt.shape[0])):
-            g = gt[c].numpy()
+        gt, gt_ext = cam.gt, getattr(cam, "gt_extracted", None)
+        for j, c in gt_to_label.items():
+            if j >= gt.shape[0]:
+                continue
+            g = gt[j].numpy()
             pred = (label_coverage(cam, gaussians, pipe, mult, labels, c) >= 0.5).cpu().numpy()
-            row = dict(view=cam.image_name, label=c, IoU=iou(pred, g), BIoU=boundary_iou(g, pred))
-            if gt_ext is not None and c < gt_ext.shape[0]:
-                ge = gt_ext[c].numpy()
+            row = dict(view=cam.image_name, gt=j, label=c, IoU=iou(pred, g), BIoU=boundary_iou(g, pred))
+            if gt_ext is not None and j < gt_ext.shape[0]:
+                ge = gt_ext[j].numpy()
                 pe = (label_coverage(cam, gaussians, pipe, mult, labels, c, extracted=True) >= 0.1).cpu().numpy()
                 row.update(EIoU=iou(pe, ge), BEIoU=boundary_iou(ge, pe))
             rows.append(row)
