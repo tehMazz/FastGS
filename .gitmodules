@@ -1,0 +1,3 @@
+[submodule "submodules/aurafusion_3dgs"]
+	path = submodules/aurafusion_3dgs
+	url = git@github.com:IVIazz97/Aurafusion-modules.git

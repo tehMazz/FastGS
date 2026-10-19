@@ -13,6 +13,26 @@ One scene end to end on SLURM: `sbatch -J <job> slurm/beags_scene.sh <name> <sce
 Benchmark (Mip-NeRF 360 + 3D-OVS bed + LERF figurines + LLFF fern): `bash slurm/launch_benchmark.sh`, then `python scripts/collect_results.py`.
 Env: `/leonardo_scratch/fast/IscrC_EditGS/envs/beags_fsplat`, `module load gcc/12.2.0 cuda/12.2`.
 
+## AuraFusion360 removal + inpainting
+`submodules/aurafusion_3dgs` = git submodule `IVIazz97/Aurafusion-modules` (AuraFusion360 on a 3DGS PLY;
+`git submodule update --init`). Two variants on the same FastGS PLY (iteration 33000) and the same object (label k):
+- `beags`: object Gaussians = `labels.pt == k` (FlashSplat skipped).
+- `vanilla`: AuraFusion's own setup, FlashSplat on the SAM2 masks of object k.
+```bash
+sbatch -J af_beags_<scene>   slurm/beags_aurafusion.sh <name> <k> beags
+sbatch -J af_vanilla_<scene> slurm/beags_aurafusion.sh <name> <k> vanilla <sam2 mask dir>
+```
+Output: `output/aurafusion/<scene>/<mode>/lama_ref/final/{point_cloud.ply,rgb/}`. AuraFusion runs in its own
+envs (graphdeco rasterizer, not `_fastgs`); paths and checkpoints are set in the sbatch script.
+
+## BakerH on the VM
+`bash scripts/bakerh/run_all.sh` (detaches; `--fg` to stay in the terminal): `setup.sh` once, then per scene
+`run_scene.sh`: SAM3 masks → FastGS 30k (reuses `output/<scene>_bakerh`) → BEA-GS prepare + finetune with dilation
+weight 0.1 → test metrics → vanilla AuraFusion360 → FlashSplat vs BEA-GS extraction panels.
+Send back `output/bakerh_logs/latest/REPORT.txt`. Outputs: `output/beags_dw0.1/bakerh/<scene>`,
+`output/aurafusion/<scene>/{vanilla,extraction}`. Paths (models, masks, `.venv_af2d`) follow ArtiFixer's
+`scripts/bakerh` on the same VM; knobs in `scripts/bakerh/common.sh`.
+
 ## Code
 | where | what |
 |---|---|
